@@ -59,8 +59,9 @@ src/main/java/io/github/springdddtemplate/
 │   ├── scheduling/           # 定时任务
 │   └── security/             # Spring Security 配置
 ├── interfaces/               # 接口层 - HTTP 入口
+│   ├── client/               # 声明式 HTTP 客户端接口 & API 契约
 │   ├── config/               # Swagger 配置
-│   ├── controller/           # REST 控制器
+│   ├── controller/           # REST 控制器（按版本拆分）
 │   ├── exception/            # 全局异常处理
 │   ├── response/             # 统一响应格式
 │   └── validation/           # 自定义校验约束
@@ -192,10 +193,62 @@ POST /api/users
 }
 ```
 
+## 客户端与 API 契约 (HTTP Interfaces)
+
+在 `interfaces/client` 下定义了基于 Spring 原生 `@HttpExchange` 的声明式 API 契约接口（`UserClientV1`、`UserClientV2`）。该接口具备**双重职责**：
+
+1. **服务端控制器契约**：由 `UserControllerV1` 和 `UserControllerV2` 分别实现。接口集中承载所有 Swagger/OpenAPI 文档注解（`@Operation`、`@ApiResponses`）及参数校验约束（`@Valid`、`@Positive`），保持控制器实现代码极其精简。
+2. **微服务声明式客户端**：消费方微服务可直接引入该接口，通过 Spring 原生 `HttpServiceProxyFactory` + `RestClient` 生成类型安全的动态代理客户端，无需引入额外的 Spring Cloud OpenFeign 依赖。
+
+### 消费方微服务使用示例
+
+#### 1. 注册客户端 Bean
+
+```java
+@Configuration
+public class UserClientConfig {
+
+    @Bean
+    public UserClientV1 userClientV1(
+            RestClient.Builder builder,
+            @Value("${services.user-service.url:http://localhost:8080}") String baseUrl) {
+        RestClient restClient = builder
+                .baseUrl(baseUrl)
+                .defaultHeader("API-Version", "1")
+                .build();
+
+        return HttpServiceProxyFactory
+                .builderFor(RestClientAdapter.create(restClient))
+                .build()
+                .createClient(UserClientV1.class);
+    }
+}
+```
+
+#### 2. 在业务服务中注入并调用
+
+```java
+@Service
+@RequiredArgsConstructor
+public class OrderService {
+
+    private final UserClientV1 userClientV1;
+
+    public void processOrder(Long userId) {
+        // 发起 HTTP GET /api/users/1，并携带 Header API-Version: 1
+        ApiResponse<UserResponse> response = userClientV1.getUser(userId);
+        UserResponse user = response.data();
+        // 业务处理...
+    }
+}
+```
+
 ## 设计要点
 
 - **DDD 分层**：domain 层不依赖任何框架，application 层编排用例，infrastructure 层提供技术实现
 - **依赖倒置**：domain 定义接口（如 `UserRepository`、`DomainEventPublisher`），infrastructure 提供实现
+- **API 契约分离**：`interfaces/client` 作为 Published Language 定义客户端/服务端共享契约与 OpenAPI 元数据
+- **版本化控制器**：控制器按 API 版本拆分（`UserControllerV1`、`UserControllerV2`），避免单类多版本方法签名冲突与代码膨胀
 - **值对象**：`EmailAddress`、`UserRole` 使用不可变对象封装业务概念
 - **域事件**：使用 Java `sealed interface` + pattern matching 实现类型安全的事件体系
 - **条件化装配**：缓存、消息、限流等基础设施通过 `@ConditionalOnProperty` 按需加载
