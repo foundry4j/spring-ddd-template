@@ -34,7 +34,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.
 ///   • Default (omitted): version 1
 ///
 /// WebMvcConfig is imported to activate the versioning infrastructure in the test slice.
-@WebMvcTest(UserController.class)
+@WebMvcTest({UserControllerV1.class, UserControllerV2.class})
 @Import({SecurityConfig.class, WebMvcConfig.class})
 @DisplayName("UserController MockMVC Tests")
 class UserControllerTest {
